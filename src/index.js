@@ -1,70 +1,116 @@
-import p5 from 'p5'
+import React, { Component } from "react"
+import ReactDOM from "react-dom"
+
 import * as tf from '@tensorflow/tfjs'
 
+import { Stage, Layer } from "react-konva"
+import { SketchPicker } from 'react-color'
+
+import 'bootstrap/dist/css/bootstrap.css'
+
+import Paint from './paint'
 import fruits from './classes'
 
-const model_path = 'http://192.168.25.119:3001/model.json'
+class App extends Component {
 
-let model
+  constructor() {
+    super()
+    this.child = React.createRef();
 
-const fruitClassifier = async () => {
-  console.log('Loading model')
-  model = await tf.loadModel(model_path)
-  model.predict(tf.zeros([1, 224, 224, 3])).dispose();
-  console.log('Model loaded')
-
-  const sketch = new p5(($) => {
-    let oldMouseX, oldMouseY
-    let img
-
-    const loadImage = () =>  {
-     const canvas = document.getElementById('defaultCanvas0');
-
-     const image = tf.image.resizeBilinear(tf.fromPixels(canvas).toFloat(), [224, 224])
-
-     const offset = tf.scalar(127.5)
-     const normalized = image.sub(offset).div(offset)
-     const batched = normalized.reshape([1, 224, 224, 3])
-
-     return batched
-   }
-
-
-    $.setup = () => {
-        const button = $.createFileInput(upload)
-
-        $.createCanvas(640, 640)
-        $.background('black')
-
-        setInterval(() => {
-          model.predict(loadImage()).data()
-          .then((predictions) => {
-            const prediction = predictions.reduce(
-              (max, value, index, arr) => value > arr[max] ? index : max, 0)
-
-            console.log(predictions[prediction])
-            console.log(predictions[prediction] > 0.5 ? fruits[prediction] : "unknown")
-           })
-        }, 1000)
+    this.state = {
+      model: null,
+      prediction: 'Unknown',
+      confidence: 0,
+      color: '#000000'
     }
+  }
 
-    const upload = (file) => {
-      img = $.loadImage(file.data, () => {
-         $.image(img, 0, 0, 640, 640);
-         img.filter($.GRAY,0.5);
-     })
-    }
+  componentDidMount() {
+    console.log("Loading model")
+    tf.loadModel('http://192.168.25.119:3001/model.json')
+    .then(model => {
+      this.setState({ model })
+      model.predict(tf.zeros([1, 224, 224, 3])).dispose()
+      console.log("Model loaded")
+    })
+  }
 
-    $.draw = () => {
-      $.image(img, 0, 0);
-      if($.mouseIsPressed){
-        $.stroke('white')
-        $.line($.mouseX, $.mouseY, oldMouseX, oldMouseY);
-      }
+  handlePredict(canvas) {
+    const { model } = this.state
 
-      [oldMouseX, oldMouseY] = [$.mouseX, $.mouseY]
-    }
-  });
+    const img = tf.image.resizeBilinear(tf.fromPixels(canvas).toFloat(), [224, 224])
+    const offset = tf.scalar(127.5)
+    const normalized = img.sub(offset).div(offset)
+    const batched = normalized.reshape([1, 224, 224, 3])
+
+    model.predict(batched).data()
+    .then(predictions => {
+      const index = predictions.reduce(
+        (max, value, index, arr) => value > arr[max] ? index : max, 0)
+
+      const prediction = predictions[index]
+      //const confidence = predictions[index] > 0.5 ? fruits[index] : "unknown"
+      const confidence = fruits[index]
+
+      this.setState({
+        ...this.state,
+        prediction,
+        confidence
+      })
+    })
+  }
+
+  handleChangeComplete = (color) => {
+    this.setState({ color: color.hex });
+  };
+
+  handleFormChange = (e) => {
+    const { child } = this
+
+    const file = URL.createObjectURL(e.target.files[0])
+    child.current.drawImage(file);
+  }
+
+  render() {
+    const { handleChangeComplete, handlePredict } = this
+    const { color, confidence, prediction } = this.state
+
+    return (
+      <div className="container-fluid">
+        <br/>
+        <div className="row justify-content-center">
+          <div className="col-md-2">
+            <div className="row justify-content-center mb-3">
+              <h4> Fruit Classifier </h4>
+            </div>
+            <SketchPicker
+              color={ color }
+              onChangeComplete={ handleChangeComplete }/>
+
+            <input type="file" ref={fileInput => this.fileInput = fileInput}
+                               style={{display: "none"}}
+                               onChange={this.handleFormChange}/>
+            <br/>
+            <div className="row justify-content-center">
+              <button className="btn btn-primary"
+                  onClick={() => this.fileInput.click()}
+                  href="#">Upload Fruit Image</button>
+            </div>
+          </div>
+          <div className="col-md-6">
+            <Stage width="640" height="640">
+              <Layer>
+                <Paint ref={this.child}
+                       color={color}
+                       handleMouseUp={handlePredict.bind(this)}/>
+              </Layer>
+            </Stage>
+            <p>{prediction} - {confidence}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 }
 
-fruitClassifier()
+ReactDOM.render(<App />, document.getElementById("root"));
